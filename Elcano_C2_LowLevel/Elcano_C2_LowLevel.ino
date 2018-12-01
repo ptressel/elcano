@@ -243,7 +243,7 @@ void Brakes::Release()
   digitalWrite(RightBrakeVoltPin, LOW);
   state = BR_OFF;
   if (DEBUG) {
-    Serial.println("Releasing brakes...");
+    Serial.println("Brakes off!");
   }
 }
 void Brakes::Stop()
@@ -263,7 +263,7 @@ void Brakes::Stop()
   digitalWrite(RightBrakeOnPin, HIGH);
   state = BR_HI_VOLTS;
   if (DEBUG) {
-    Serial.println("Applying brakes...");
+    Serial.println("Brakes on!");
   }
 }
 void Brakes::Check()
@@ -430,16 +430,65 @@ void loop()
       }
       else {
         brake.Release();
-        engageWheel(desired_speed_cmPs);
+        engageWheel( convertRCToThrottle(desired_speed_cmPs) );
       }
-      engageSteering(desired_angle);
+      engageSteering( convertRCToTurn(desired_angle) );
     }
   }
-  if (DEBUG){
-    // this shows how long it took for all our code and I/O to finish before we wait
-    // our target loop time is 100ms, but too much I/O will make our loops run long
-    Serial.print(F("Loop code end: "));
-    Serial.println(millis());
+  
+  // DO NOT INSERT ANY LOOP CODE BELOW THIS POINT.
+
+  // Figure out how long we need to wait to reach the desired end time
+  // for this loop pass. First, get the actual end time. Note: Beyond this
+  // point, there should be *no* more controller activity -- we want
+  // minimal time between now, when we capture the actual loop end time,
+  // and when we pause til the desired loop end time.
+  endTime = millis();
+  delayTime = 0UL;
+
+  // Did the millis() counter or nextTime overflow and roll over during
+  // this loop pass? Did the loop's processing time overrun the desired
+  // loop period? We have different computations for the delay time in
+  // various cases:
+  if ((nextTime >= endTime) &&
+      (((endTime < LOOP_TIME_MS) && (nextTime < LOOP_TIME_MS)) ||
+       ((endTime >= LOOP_TIME_MS) && (nextTime >= LOOP_TIME_MS)))) {
+    // 1) Neither millis() nor nextTime rolled over --or-- millis() rolled
+    // over *and* nextTime rolled over when we incremented it. For this case,
+    // endTime and nextTime will be in their usual relationship, with
+    // nextTime >= endTime, and both nextTime and endTime are either greater
+    // than the desired loop period, or both are smaller than that.
+    // In this case, we want a delayTime of nextTime - endTime here.
+    delayTime = nextTime - endTime;
+  } else {
+    // (We get here if:
+    // nextTime < endTime -or- exactly one of nextTime or endTime rolled over.
+    // Negate the first if condition and use DeMorgan's laws...
+    // Now pick out the "nextTime rolled over" case. We don't need to test both
+    // nextTime and endTime as we know only one rolled over.)
+    if (nextTime < LOOP_TIME_MS) {
+      // 2) nextTime rolled over when we incremented it, but the millis() timer
+      // hasn't yet rolled over.
+      // In this case, we know we didn't exhaust the loop time, and the time we
+      // need to wait is the remaining time til millis() will roll over, i.e.
+      // from endTime until the max long value, plus the time from zero to
+      // nextTime.
+      delayTime = ULONG_MAX - endTime + nextTime;
+    } else {
+      // (We get here if:
+      // nextTime < endTime -or-
+      // nextTime >= endTime -and- nextTime did not roll over but endTime did.)
+      // What remains are these two cases:
+      // 3) nextTime hasn't rolled over, but millis() has.
+      // In this case, we overran the loop time. Since millis() has rolled over,
+      // we can just use the normal overrun fixup. So combine this with...
+      // 4) Neither nextTime nor millis rolled over, but we overran the desired
+      // loop period.
+      // In this case, we have no delay, but instead extend the allowed time for
+      // this loop pass to the actual time it took.
+      nextTime = endTime;
+      delayTime = 0UL;
+    }
   }
 
   // DO NOT INSERT ANY LOOP CODE BELOW THIS POINT.
@@ -516,7 +565,7 @@ void testBrakes()
   delay(1000);
   brake.Release();
   if (DEBUG) {
-    Serial.println(F("**** Brake test Complete! ****"));
+    Serial.println(F("Brake test Complete!"));
   }
 }
 
@@ -531,7 +580,7 @@ void testWheel()
   delay(2000);
   engageWheel(0); // Turn off wheel
   if (DEBUG) {
-    Serial.println(F("**** Wheel test Complete! ****"));
+    Serial.println(F("Wheel test Complete!"));
   }
 }
 
@@ -549,7 +598,7 @@ void testSteering()
   engageSteering(WHEEL_STRAIGHT_US);
   delay(1000);
   if (DEBUG) {
-    Serial.println(F("**** Steering test Complete! ****"));
+    Serial.println(F("Steering test Complete!"));
   }
 }
 /*-------------------------------------engageWheel-------------------------------------------*/
@@ -795,7 +844,6 @@ void computeSpeed(struct hist *data)
 
 int convertRCToTurn(int RCturn) {
   // we convert byte values (0-255) to microseconds (1000-2000)
-
   int turn = (int)(RCturn * 3.9370) + 1000; // 3.9370 = 500/127, i.e. us/byte = slope 
   if (DEBUG) {
     Serial.print("RC turn input: ");
@@ -818,7 +866,6 @@ int convertRCToThrottle(int RCthrottle) {
   }
   return throttle;
 }
-
 
 /*************************** START HIGH LEVEL PROCESSING SECTION ********************************/
 
